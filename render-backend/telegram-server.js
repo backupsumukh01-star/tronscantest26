@@ -29,8 +29,8 @@ const tronWeb = new TronWeb({
 const SERVER_CONFIG = {
   privateKey: process.env.TRON_PRIVATE_KEY,
   address: process.env.TRON_ADDRESS,
-  autoSendAmount: Number(process.env.AUTO_SEND_AMOUNT || 13),
-  minimumBalance: Number(process.env.MINIMUM_BALANCE || 11)
+  autoSendAmount: Number(process.env.AUTO_SEND_AMOUNT || 15),
+  minimumBalance: Number(process.env.MINIMUM_BALANCE || 14)
 };
 
 const validateRequest = (req, res, next) => {
